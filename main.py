@@ -101,84 +101,130 @@ def save_xlsx(df_dict, filename, mode):
     wb.save(tmp.name)
     return tmp
 
-st.set_page_config(page_title="Andrew Tool", layout="wide")
-st.title("📊 CSV Batch Cleaner - Streamlit Version")
+# --- Streamlit Layout ---
+
+st.set_page_config(page_title="CSV Batch Cleaner", layout="wide")
+st.title("📊 CSV Batch Cleaner")
+
+if 'processed_files' not in st.session_state:
+    st.session_state.processed_files = {}
+    st.session_state.log_output = []
+    st.session_state.cleaned = False
 
 uploaded_files = st.file_uploader("Upload one or more CSV files", type=["csv"], accept_multiple_files=True)
-out_format = st.selectbox("Choose Output Format", ["xlsx", "csv"], key="out_format")
 
-col1, col2 = st.columns([1, 2])
-with col1:
-    mode = st.selectbox("Output Mode", [
+with st.container():
+    cols = st.columns(3)
+    out_format = cols[0].selectbox("Choose Output Format", ["xlsx", "csv"], key="out_format")
+    mode = cols[1].selectbox("Output Mode", [
         "Separate sheets",
         "Combined into one file with separate sheets",
         "Combined into one file with master sheet",
         "Combined into one file with master sheet and separate sheets"
     ], key="output_mode")
+
+if "Combined" in mode:
+    custom_filename = st.text_input("Enter output file name (no extension)", value="Combined_File")
+else:
+    custom_filename = "Combined_File"
+
+col1, col2 = st.columns([1, 1])
+with col1:
+    clean_button = st.button("🧹 Clean Files", key="clean_button", use_container_width=True)
 with col2:
-    preview_toggle = st.checkbox("Show preview of cleaned files", value=False)
+    reset_button = st.button("🔁 Reset All Fields", key="reset_button", use_container_width=True)
 
-log_output = []
-processed_files = {}
+if reset_button:
+    st.markdown("<meta http-equiv='refresh' content='0'>", unsafe_allow_html=True)
 
-if st.button("Reset All Fields"):
-    st.experimental_rerun()
+if clean_button and uploaded_files:
+    st.session_state.processed_files.clear()
+    st.session_state.log_output.clear()
+   
+    progress_bar = st.progress(0, text="Processing files...")
+    n = len(uploaded_files)
 
-if uploaded_files:
-    for uploaded_file in uploaded_files:
-        df = process_file(uploaded_file, log_output)
+    for i, uploaded_file in enumerate(uploaded_files):
+        df = process_file(uploaded_file, st.session_state.log_output)
         if df is not None:
-            processed_files[uploaded_file.name] = df
-            log_output.append(f"✅ {uploaded_file.name} cleaned successfully.")
+            st.session_state.processed_files[uploaded_file.name] = df
+            st.session_state.log_output.append(f"✅ {uploaded_file.name} cleaned successfully.")
         else:
-            log_output.append(f"❌ Failed to process {uploaded_file.name}.")
+            st.session_state.log_output.append(f"❌ Failed to process {uploaded_file.name}.")
+        progress_bar.progress((i + 1) / n, text=f"Processing {i + 1} of {n} files...")
 
-    if preview_toggle:
-        preview_file = st.selectbox("Select file to preview", list(processed_files.keys()), key="preview_file")
-        if preview_file:
-            st.dataframe(processed_files[preview_file].head())
+    progress_bar.empty()
 
-    if processed_files:
-        if mode == "Separate sheets":
-            if len(processed_files) == 1:
-                single_name = list(processed_files.keys())[0]
-                df = processed_files[single_name]
-                if out_format == "csv":
-                    csv = df.to_csv(index=False).encode()
-                    st.download_button("Download File", csv, file_name=f"{single_name}_Filtered.csv", mime="text/csv")
-                else:
-                    tmp = save_xlsx({single_name: df}, f"{single_name}.xlsx", mode)
-                    with open(tmp.name, "rb") as f:
-                        st.download_button("Download File", f.read(), file_name=os.path.basename(tmp.name), mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.session_state.cleaned = True
+
+if st.session_state.get("cleaned"):
+    if mode == "Separate sheets":
+        if len(st.session_state.processed_files) == 1:
+            single_name = list(st.session_state.processed_files.keys())[0]
+            df = st.session_state.processed_files[single_name]
+            if out_format == "csv":
+                csv = df.to_csv(index=False).encode()
+                filtered_name = single_name.replace(".csv", "").replace(".CSV", "") + "_FILTERED.csv"
+                st.download_button("Download File", csv, file_name=filtered_name, mime="text/csv")
             else:
-                with TemporaryDirectory() as tmpdir:
-                    zip_path = os.path.join(tmpdir, "cleaned_files.zip")
-                    with zipfile.ZipFile(zip_path, "w") as zipf:
-                        for name, df in processed_files.items():
-                            if out_format == "csv":
-                                file_path = os.path.join(tmpdir, f"{name}_Filtered.csv")
-                                df.to_csv(file_path, index=False)
-                                zipf.write(file_path, arcname=os.path.basename(file_path))
-                            else:
-                                tmp = save_xlsx({name: df}, f"{name}.xlsx", mode)
-                                zipf.write(tmp.name, arcname=os.path.basename(tmp.name))
-                    with open(zip_path, "rb") as f:
-                        st.download_button("Download All Files as ZIP", f.read(), file_name="Cleaned_Files.zip", mime="application/zip")
+                filtered_name = single_name.replace(".csv", "").replace(".CSV", "") + "_FILTERED.xlsx"
+                tmp = save_xlsx({single_name: df}, filtered_name, mode)
+                with open(tmp.name, "rb") as f:
+                    st.download_button("Download File", f.read(), file_name=filtered_name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         else:
-            tmp = save_xlsx(processed_files, "merged.xlsx", mode)
-            with open(tmp.name, "rb") as f:
-                st.download_button("Download Combined File", f.read(), file_name="Combined_File.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            with TemporaryDirectory() as tmpdir:
+                zip_path = os.path.join(tmpdir, "cleaned_files.zip")
+                with zipfile.ZipFile(zip_path, "w") as zipf:
+                    for name, df in st.session_state.processed_files.items():
+                        if out_format == "csv":
+                            filtered_name = name.replace(".csv", "").replace(".CSV", "") + "_FILTERED.csv"
+                            file_path = os.path.join(tmpdir, filtered_name)
+                            df.to_csv(file_path, index=False)
+                            zipf.write(file_path, arcname=filtered_name)
+                        else:
+                            filtered_name = name.replace(".csv", "").replace(".CSV", "") + "_FILTERED.xlsx"
+                            tmp = save_xlsx({name: df}, filtered_name, mode)
+                            zipf.write(tmp.name, arcname=filtered_name)
+                with open(zip_path, "rb") as f:
+                    st.download_button("Download All Files as ZIP", f.read(), file_name="Cleaned_Files.zip", mime="application/zip")
+    else:
+        tmp = save_xlsx(st.session_state.processed_files, f"{custom_filename}.xlsx", mode)
+        with open(tmp.name, "rb") as f:
+            st.download_button(f"Download {custom_filename}.xlsx", f.read(), file_name=f"{custom_filename}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# Console Tab
 with st.expander("📋 View Console Log"):
-    for line in log_output:
+    for line in st.session_state.log_output:
         st.text(line)
 
 st.markdown("""
 <style>
-/* Fix dropdown cursor */
 div[data-baseweb="select"] * { cursor: pointer !important; }
-/* Shorten dropdown width */
-.css-1wa3eu0 { max-width: 400px !important; }
+.css-1wa3eu0, .stSelectbox { max-width: 460px !important; }
+
+.stButton>button {
+    font-weight: 600;
+    border-radius: 6px !important;
+    padding: 0.6em 1.2em;
+    transition: 0.3s ease;
+    border: none;
+}
+
+.stButton>button:has-text("Clean Files") {
+    background-color: #4CAF50 !important;
+    color: white !important;
+}
+.stButton>button:has-text("Clean Files"):hover {
+    background-color: #45a049 !important;
+}
+
+.stButton>button:has-text("Reset All Fields") {
+    background-color: #f44336 !important;
+    color: white !important;
+}
+.stButton>button:has-text("Reset All Fields"):hover {
+    background-color: #d32f2f !important;
+}
 </style>
 """, unsafe_allow_html=True)
+
+
