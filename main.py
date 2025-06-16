@@ -115,7 +115,8 @@ def process_file(file, log):
 
 def save_xlsx(df_dict, filename, mode):
     wb = Workbook()
-    wb.remove(wb.active)
+    if wb.active:
+        wb.remove(wb.active)  # Only remove default sheet if it exists
 
     if "master" in mode.lower():
         all_df = pd.concat(df_dict.values(), axis=0, ignore_index=True)
@@ -176,8 +177,11 @@ else:
 col1, col2 = st.columns([1, 1])
 with col1:
     clean_button = st.button("🧹 Clean Files", key="clean_button", use_container_width=True)
+
 with col2:
     reset_button = st.button("🔁 Reset All Fields", key="reset_button", use_container_width=True)
+
+
 
 if reset_button:
     st.markdown("<meta http-equiv='refresh' content='0'>", unsafe_allow_html=True)
@@ -243,34 +247,74 @@ with st.expander("📋 View Console Log"):
 
 st.markdown("""
 <style>
-div[data-baseweb="select"] * { cursor: pointer !important; }
-.css-1wa3eu0, .stSelectbox { max-width: 460px !important; }
-
-.stButton>button {
+/* Base button style */
+.stButton > button {
     font-weight: 600;
     border-radius: 6px !important;
     padding: 0.6em 1.2em;
-    transition: 0.3s ease;
-    border: none;
+    transition: background-color 0.3s ease, border 0.3s ease;
+    border: 0px solid transparent !important;
 }
 
-.stButton>button:has-text("Clean Files") {
-    background-color: #4CAF50 !important;
-    color: white !important;
+/* Clean Files Button (first button) */
+.stButton:nth-of-type(1) button {
+    background-color: #f0f2f6 !important;
+    color: black !important;
 }
-.stButton>button:has-text("Clean Files"):hover {
-    background-color: #45a049 !important;
+.stButton:nth-of-type(1) button:hover {
+    background-color: #a2c4f2 !important;
 }
 
-.stButton>button:has-text("Reset All Fields") {
-    background-color: #f44336 !important;
+/* Reset Button (second button) */
+.stButton:nth-of-type(2) button {
+    background-color: #e74c3c !important;
     color: white !important;
 }
-.stButton>button:has-text("Reset All Fields"):hover {
-    background-color: #d32f2f !important;
+.stButton:nth-of-type(2) button:hover {
+    background-color: #a2c4f2 !important;
+}
+
+/* Dark mode override */
+@media (prefers-color-scheme: dark) {
+    .stButton:nth-of-type(1) button {
+        background-color: #262730 !important;
+        color: white !important;
+    }
+    .stButton:nth-of-type(1) button:hover {
+        background-color: #003e94 !important;
+    }
+
+    .stButton:nth-of-type(2) button {
+        background-color: #c0392b !important;
+        color: white !important;
+    }
+    .stButton:nth-of-type(2) button:hover {
+        background-color: #003e94 !important;
+    }
+}
+
+.stSelectbox * {
+    cursor: default !important;
+}
+
+/* Disable text input behavior */
+div[data-baseweb="select"] input {
+    pointer-events: none !important;
+    caret-color: transparent !important;
+    user-select: none !important;
+}
+
+/* Disable placeholder text selection */
+div[data-baseweb="select"] input::placeholder {
+    color: #999 !important;
 }
 </style>
+
+
+</style>
 """, unsafe_allow_html=True)
+
+
 
 
 st.markdown("""
