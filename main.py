@@ -146,7 +146,7 @@ def save_xlsx(df_dict, filename, mode):
 # --- Streamlit Layout ---
 
 st.set_page_config(page_title="CSV Batch Cleaner", layout="wide")
-st.title("📊 CSV Batch Cleaner")
+st.title("📈 CSV Batch Cleaner")
 
 if 'processed_files' not in st.session_state:
     st.session_state.processed_files = {}
@@ -162,7 +162,7 @@ with st.container():
         "Separate sheets",
         "Combined into one file with separate sheets",
         "Combined into one file with master sheet",
-        "Combined into one file with master sheet and separate sheets"
+        "Combined into one file with master & separate sheets"
     ], key="output_mode")
 
 rounding_interval = cols[2].selectbox("Rounding Interval", ["15 min", "1 min"], key="rounding_interval")
@@ -278,7 +278,7 @@ st.markdown("""
 #custom-watermark {
     position: fixed;
     bottom: 10px;
-    right: 10px;
+    left: 10px;  /* Moved from right to left */
     font-size: 12px;
     color: #aaa;
     z-index: 9999;
@@ -297,3 +297,4 @@ st.markdown("""
     <a href="https://www.linkedin.com/in/anthonyradke/" target="_blank">Made by Anthony Radke</a>
 </div>
 """, unsafe_allow_html=True)
+
