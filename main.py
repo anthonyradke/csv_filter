@@ -9,23 +9,57 @@ import base64
 import zipfile
 import os
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+import re
 
-def round_to_15_min(dt):
-    discard = timedelta(minutes=dt.minute % 15, seconds=dt.second, microseconds=dt.microsecond)
-    dt -= discard
-    if discard >= timedelta(minutes=7.5):
-        dt += timedelta(minutes=15)
-    return dt
+def round_timestamp(dt, interval):
+    if pd.isna(dt):
+        return None
+    if interval == "15 min":
+        discard = timedelta(
+            minutes=dt.minute % 15,
+            seconds=dt.second,
+            microseconds=dt.microsecond
+        )
+        dt -= discard
+        if discard >= timedelta(minutes=7.5):
+            dt += timedelta(minutes=15)
+        return dt
+    else:  # "1 min"
+        return dt.replace(second=0, microsecond=0)
+
+
 
 def simplify_name(full_name):
-    if isinstance(full_name, str):
-        if "|dac-" in full_name:
-            return full_name.split("|")[0].split(".")[-1]
-        elif ".FLN_" in full_name:
-            return full_name.split(".FLN_", 1)[1]
-        else:
-            return full_name.split(".")[-1]
-    return full_name
+    if not isinstance(full_name, str):
+        return full_name
+
+    name = full_name.strip()
+
+    # Step 1: Remove any URL in parentheses
+    name = re.sub(r"\(https?://[^\)]*\)", "", name)
+
+    # Step 2: If there's a .FLN_ section, use the part after it
+    if ".FLN_" in name:
+        fln_part = name.split(".FLN_")[-1]
+        return "_".join(fln_part.split(".")[-4:])
+
+    # Step 3: If .Points. exists, prefer the piece after that
+    if ".Points." in name:
+        return name.split(".Points.")[-1].split(".Value")[0]
+
+    # Step 4: If parentheses contain a readable tag, use that
+    if "(" in name and ")" in name:
+        inside = name.split("(")[-1].split(")")[0]
+        if not inside.startswith("http") and "." in inside:
+            return inside.replace(".", "_")
+
+    # Step 5: Fallback to last few parts before ".Value"
+    parts = name.split(".")
+    if "Value" in parts:
+        parts = parts[:parts.index("Value")]
+    return "_".join(parts[-4:])
+
+
 
 def ensure_unique_columns(df):
     seen = {}
@@ -48,9 +82,9 @@ def process_file(file, log):
             try:
                 time_col = pd.to_datetime(df_raw.iloc[1:, i].astype(str), errors='coerce')
                 values = df_raw.iloc[1:, i + 1]
-                time_rounded = time_col.map(round_to_15_min)
+                time_rounded = time_col.map(lambda dt: round_timestamp(dt, st.session_state.rounding_interval))
                 valid = time_rounded.notna()
-                title = str(df_raw.iloc[0, i])
+                title = simplify_name(str(df_raw.iloc[0, i]))
 
                 temp_df = pd.DataFrame({
                     "datetime": time_rounded[valid],
@@ -65,7 +99,15 @@ def process_file(file, log):
             return None
 
         clean_df = clean_df.groupby("datetime", as_index=False).first().sort_values("datetime").reset_index(drop=True)
-        clean_df = clean_df.rename(columns={col: simplify_name(col) for col in clean_df.columns if col != "datetime"})
+
+        # Ensure continuous timestamps at the selected interval
+        if st.session_state.rounding_interval == "15 min":
+            # Only reindex when using 15-min rounding
+            full_range = pd.date_range(start=clean_df['datetime'].min(), end=clean_df['datetime'].max(), freq='15min')
+            clean_df = clean_df.set_index('datetime').reindex(full_range).rename_axis('datetime').reset_index()
+        # else: do nothing in 1-min mode — keep natural timestamps after rounding to :00s
+
+
         return ensure_unique_columns(clean_df)
     except Exception as e:
         log.append(f"Failed to process file: {e}")
@@ -122,6 +164,9 @@ with st.container():
         "Combined into one file with master sheet",
         "Combined into one file with master sheet and separate sheets"
     ], key="output_mode")
+
+rounding_interval = cols[2].selectbox("Rounding Interval", ["15 min", "1 min"], key="rounding_interval")
+
 
 if "Combined" in mode:
     custom_filename = st.text_input("Enter output file name (no extension)", value="Combined_File")
@@ -228,3 +273,27 @@ div[data-baseweb="select"] * { cursor: pointer !important; }
 """, unsafe_allow_html=True)
 
 
+st.markdown("""
+<style>
+#custom-watermark {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    font-size: 12px;
+    color: #aaa;
+    z-index: 9999;
+}
+#custom-watermark a {
+    color: #aaa;
+    text-decoration: none;
+}
+#custom-watermark a:hover {
+    color: #888;
+    text-decoration: underline;
+}
+</style>
+
+<div id="custom-watermark">
+    <a href="https://www.linkedin.com/in/anthonyradke/" target="_blank">Made by Anthony Radke</a>
+</div>
+""", unsafe_allow_html=True)
