@@ -1,17 +1,11 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk, scrolledtext
-import os
+import streamlit as st
 import pandas as pd
 from datetime import timedelta
+from io import StringIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
-
-
-
-
-
-
+import base64
 
 def round_to_15_min(dt):
     discard = timedelta(minutes=dt.minute % 15, seconds=dt.second, microseconds=dt.microsecond)
@@ -43,16 +37,10 @@ def ensure_unique_columns(df):
     df.columns = new_cols
     return df
 
-def process_file_gui(file_path, log_box):
-    filename = os.path.basename(file_path)
-    log_box.insert(tk.END, f"\n📄 Processing: {filename}\n")
-    log_box.update()
-
+def process_file(file):
     try:
-        df_raw = pd.read_csv(file_path, header=None, skiprows=[0, 2])
+        df_raw = pd.read_csv(file, header=None, skiprows=[0, 2])
         clean_df = pd.DataFrame()
-        skipped_cols = []
-
         for i in range(0, df_raw.shape[1], 4):
             try:
                 time_col = pd.to_datetime(df_raw.iloc[1:, i].astype(str), errors='coerce')
@@ -65,215 +53,87 @@ def process_file_gui(file_path, log_box):
                     "datetime": time_rounded[valid],
                     title: values[valid]
                 })
-
                 clean_df = temp_df if clean_df.empty else pd.merge(clean_df, temp_df, on="datetime", how="outer")
-            except Exception:
-                skipped_cols.append(get_column_letter(i + 1))
-
-        if skipped_cols:
-            joined = ", ".join(skipped_cols)
-            log_box.insert(tk.END, f"⚠️  Skipped groups at columns: {joined}\n")
-            log_box.update()
+            except:
+                continue
 
         if "datetime" not in clean_df.columns:
-            raise ValueError("'datetime' column missing after processing.")
+            return None
 
         clean_df = clean_df.groupby("datetime", as_index=False).first().sort_values("datetime").reset_index(drop=True)
         clean_df = clean_df.rename(columns={col: simplify_name(col) for col in clean_df.columns if col != "datetime"})
         return ensure_unique_columns(clean_df)
-    except Exception as e:
-        log_box.insert(tk.END, f"❌ Failed to process: {e}\n")
-        log_box.update()
+    except:
         return None
 
-def start_gui():
-    def browse_files():
-        files = filedialog.askopenfilenames(filetypes=[("CSV Files", "*.csv")])
-        if files:
-            selected_files.clear()
-            selected_files.extend(files)
-            file_list_var.set("\n".join(os.path.basename(f) for f in files))
+def to_excel_download_link(df, filename):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cleaned Data"
+    for r in dataframe_to_rows(df, index=False, header=True):
+        ws.append(r)
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = 31.00
+    for cell in ws['A'][1:]:
+        cell.number_format = 'm/d/yyyy h:mm:ss AM/PM'
 
-    def browse_folder():
-        folder = filedialog.askdirectory()
-        if folder:
-            output_folder_var.set(folder)
+    from tempfile import NamedTemporaryFile
+    tmp = NamedTemporaryFile(delete=False, suffix=".xlsx")
+    wb.save(tmp.name)
+    tmp.seek(0)
+    data = tmp.read()
+    tmp.close()
+    b64 = base64.b64encode(data).decode()
+    return f'<a href="data:application/octet-stream;base64,{b64}" download="{filename}">📥 Download {filename}</a>'
 
-    def reset_fields():
-        selected_files.clear()
-        file_list_var.set("")
-        output_folder_var.set("")
-        filename_entry.delete(0, tk.END)
-        log_box.delete(1.0, tk.END)
+st.set_page_config(page_title="Andrew Tool", layout="wide")
+st.title("📊 CSV Batch Cleaner - Streamlit Version")
 
-    def update_filename_visibility(*args):
-        if "Merge" in merge_var.get():
-            filename_entry.config(state="normal")
+uploaded_files = st.file_uploader("Upload one or more CSV files", type=["csv"], accept_multiple_files=True)
+out_format = st.selectbox("Choose Output Format", ["xlsx", "csv"])
+
+if uploaded_files:
+    processed_files = {}
+    for uploaded_file in uploaded_files:
+        st.markdown(f"### Processing: {uploaded_file.name}")
+        df = process_file(uploaded_file)
+        if df is not None:
+            st.success(f"✅ {uploaded_file.name} cleaned successfully!")
+            st.dataframe(df.head())
+            processed_files[uploaded_file.name] = df
         else:
-            filename_entry.config(state="disabled")
+            st.error(f"❌ Failed to process {uploaded_file.name}")
 
-    def start_processing():
-        if not selected_files:
-            messagebox.showwarning("No files selected", "Please select one or more CSV files.")
-            return
-
-        out_dir = output_folder_var.get() or os.path.dirname(selected_files[0])
-        out_format = format_var.get()
-        mode = merge_var.get()
-
-        if "Merge" in mode:
-            output_name = filename_entry.get().strip()
-            if not output_name:
-                messagebox.showerror("Missing Filename", "Please enter a name for the merged output file.")
-                return
-            save_path = os.path.join(out_dir, f"{output_name}.{out_format}")
-
-        log_box.delete(1.0, tk.END)
-        processed_data = {}
-        for file_path in selected_files:
-            df = process_file_gui(file_path, log_box)
-            if df is not None:
-                processed_data[os.path.splitext(os.path.basename(file_path))[0]] = df
-
-        if not processed_data:
-            return messagebox.showerror("Error", "No valid data to save.")
+    if processed_files:
+        mode = st.selectbox("Output Mode", [
+            "Keep files separate",
+            "Merge into one file with one sheet"
+        ])
 
         if mode == "Keep files separate":
-            for name, df in processed_data.items():
-                save_path = os.path.join(out_dir, f"{name}_Filtered.{out_format}")
+            for name, df in processed_files.items():
                 if out_format == "csv":
-                    df.to_csv(save_path, index=False)
+                    csv = df.to_csv(index=False).encode()
+                    st.download_button(
+                        label=f"Download {name}_Filtered.csv",
+                        data=csv,
+                        file_name=f"{name}_Filtered.csv",
+                        mime='text/csv'
+                    )
                 else:
-                    wb = Workbook()
-                    ws = wb.active
-                    ws.title = "Cleaned Data"
-                    for r in dataframe_to_rows(df, index=False, header=True):
-                        ws.append(r)
-                    for col in ws.columns:
-                        ws.column_dimensions[col[0].column_letter].width = 31.00
-                    for cell in ws['A'][1:]:
-                        cell.number_format = 'm/d/yyyy h:mm:ss AM/PM'
-                    wb.save(save_path)
-                log_box.insert(tk.END, f"✅ Saved as: {save_path}\n")
+                    st.markdown(to_excel_download_link(df, f"{name}_Filtered.xlsx"), unsafe_allow_html=True)
         else:
-            if mode == "Merge into one sheet":
-                all_df = pd.concat(processed_data.values(), axis=0, ignore_index=True)
-                all_df = all_df.groupby("datetime", as_index=False).first().sort_values("datetime").reset_index(drop=True)
-                all_df = ensure_unique_columns(all_df)
+            merged_df = pd.concat(processed_files.values(), axis=0, ignore_index=True)
+            merged_df = merged_df.groupby("datetime", as_index=False).first().sort_values("datetime").reset_index(drop=True)
+            merged_df = ensure_unique_columns(merged_df)
 
-                if out_format == "csv":
-                    all_df.to_csv(save_path, index=False)
-                else:
-                    wb = Workbook()
-                    ws = wb.active
-                    ws.title = "Combined Data"
-                    for r in dataframe_to_rows(all_df, index=False, header=True):
-                        ws.append(r)
-                    for col in ws.columns:
-                        ws.column_dimensions[col[0].column_letter].width = 31.00
-                    for cell in ws['A'][1:]:
-                        cell.number_format = 'm/d/yyyy h:mm:ss AM/PM'
-                    wb.save(save_path)
+            if out_format == "csv":
+                csv = merged_df.to_csv(index=False).encode()
+                st.download_button(
+                    label="Download Merged File",
+                    data=csv,
+                    file_name="Merged_File.csv",
+                    mime='text/csv'
+                )
             else:
-                wb = Workbook()
-                wb.remove(wb.active)
-                if "master" in mode.lower():
-                    all_df = pd.concat(processed_data.values(), axis=0, ignore_index=True)
-                    all_df = all_df.groupby("datetime", as_index=False).first().sort_values("datetime").reset_index(drop=True)
-                    all_df = ensure_unique_columns(all_df)
-                    ws = wb.create_sheet("Master Sheet")
-                    for r in dataframe_to_rows(all_df, index=False, header=True):
-                        ws.append(r)
-                    for col in ws.columns:
-                        ws.column_dimensions[col[0].column_letter].width = 31.00
-                    for cell in ws['A'][1:]:
-                        cell.number_format = 'm/d/yyyy h:mm:ss AM/PM'
-                for name, df in processed_data.items():
-                    ws = wb.create_sheet(name[:31])
-                    for r in dataframe_to_rows(df, index=False, header=True):
-                        ws.append(r)
-                    for col in ws.columns:
-                        ws.column_dimensions[col[0].column_letter].width = 31.00
-                    for cell in ws['A'][1:]:
-                        cell.number_format = 'm/d/yyyy h:mm:ss AM/PM'
-                wb.save(save_path)
-            log_box.insert(tk.END, f"✅ Combined file saved as: {save_path}\n")
-
-        messagebox.showinfo("Done", "Batch processing complete!")
-
-    root = tk.Tk()
-    root.title("Super Cool Andrew Tool")
-
-    window_width = 860
-    window_height = 620
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    x_coord = (screen_width // 2) - (window_width // 2)
-    y_coord = (screen_height // 2) - (window_height // 2)
-    root.geometry(f"{window_width}x{window_height}+{x_coord}+{y_coord}")
-    root.resizable(True, True)
-
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill="both", expand=True)
-
-    # === Main Tab ===
-    main_tab = tk.Frame(notebook)
-    notebook.add(main_tab, text="Main")
-
-    selected_files = []
-    file_list_var = tk.StringVar()
-    output_folder_var = tk.StringVar()
-    format_var = tk.StringVar(value="xlsx")
-    merge_var = tk.StringVar(value="Keep files separate")
-
-    tk.Label(main_tab, text="1. Select CSV File(s):").pack(anchor="w", padx=10, pady=(10, 0))
-    tk.Button(main_tab, text="Browse CSV Files", command=browse_files).pack(anchor="w", padx=10)
-    tk.Label(main_tab, textvariable=file_list_var, justify="left", fg="gray", wraplength=700).pack(anchor="w", padx=20)
-
-    tk.Label(main_tab, text="2. Select Output Format:").pack(anchor="w", padx=10, pady=(10, 0))
-    ttk.Combobox(main_tab, textvariable=format_var, values=["xlsx", "csv"], state="readonly", width=10).pack(anchor="w", padx=10)
-    tk.Label(main_tab, text="Note: XLSX supports column formatting, CSV does not.", fg="gray").pack(anchor="w", padx=20)
-
-    tk.Label(main_tab, text="3. Select Output Mode:").pack(anchor="w", padx=10, pady=(10, 0))
-    ttk.Combobox(main_tab, textvariable=merge_var, values=[
-        "Keep files separate",
-        "Merge into one file with one sheet",
-        "Merge into one file with separate sheets",
-        "Merge into master file: one file, master sheet, and individual sheets"
-    ], state="readonly", width=50).pack(anchor="w", padx=10)
-    merge_var.trace_add("write", update_filename_visibility)
-
-    tk.Label(main_tab, text="4. Output file name (if merging):").pack(anchor="w", padx=10, pady=(10, 0))
-    filename_entry = tk.Entry(main_tab, width=50)
-    filename_entry.pack(anchor="w", padx=10)
-    filename_entry.config(state="disabled")
-
-    tk.Label(main_tab, text="5. Optional Output Folder:").pack(anchor="w", padx=10, pady=(10, 0))
-    tk.Button(main_tab, text="Browse Output Folder", command=browse_folder).pack(anchor="w", padx=10)
-    tk.Label(main_tab, textvariable=output_folder_var, justify="left", fg="gray").pack(anchor="w", padx=20)
-
-    start_button = tk.Button(
-        main_tab,
-        text="Start Processing",
-        command=start_processing,
-        bg="#4CAF50",       # green background
-        fg="black",         # text color
-        activebackground="#45a049",  # on click
-        activeforeground="white",    # text on click
-        relief="raised",    # gives it visible depth
-        borderwidth=2
-    )
-    start_button.pack(anchor="w", padx=10, pady=(10, 5))
-    reset_button = tk.Button(main_tab, text="Reset All Fields", command=reset_fields, bg="#f44336", fg="white")
-    reset_button.place(relx=1.0, y=10, anchor="ne", x=-10)
-
-    # === Log Tab ===
-    log_tab = tk.Frame(notebook)
-    notebook.add(log_tab, text="Console Log")
-    log_box = scrolledtext.ScrolledText(log_tab, height=30, width=110)
-    log_box.pack(padx=10, pady=10, fill="both", expand=True)
-    log_box.bind_all("<MouseWheel>", lambda e: log_box.yview_scroll(-1*(e.delta//120), "units"))
-
-    root.mainloop()
-
-start_gui()
+                st.markdown(to_excel_download_link(merged_df, "Merged_File.xlsx"), unsafe_allow_html=True)
