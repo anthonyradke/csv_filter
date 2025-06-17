@@ -258,20 +258,20 @@ st.markdown("""
 
 /* Clean Files Button (first button) */
 .stButton:nth-of-type(1) button {
-    background-color: #f0f2f6 !important;
-    color: black !important;
+    background-color: #262730 !important;
+    color: white !important;
 }
 .stButton:nth-of-type(1) button:hover {
-    background-color: #a2c4f2 !important;
+    background-color: #003e94 !important;
 }
 
 /* Reset Button (second button) */
 .stButton:nth-of-type(2) button {
-    background-color: #e74c3c !important;
+    background-color: #c0392b !important;
     color: white !important;
 }
 .stButton:nth-of-type(2) button:hover {
-    background-color: #a2c4f2 !important;
+    background-color: #003e94 !important;
 }
 
 /* Dark mode override */
