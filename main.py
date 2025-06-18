@@ -146,8 +146,8 @@ def save_xlsx(df_dict, filename, mode):
 
 # --- Streamlit Layout ---
 
-st.set_page_config(page_title="CSV Batch Cleaner", layout="wide")
-st.title("📈 CSV Batch Cleaner")
+st.set_page_config(page_title="Siemens BAS Data Cleaner", layout="wide")
+st.title("Siemens BAS Data Cleaner")
 
 if 'processed_files' not in st.session_state:
     st.session_state.processed_files = {}
